@@ -32,6 +32,7 @@ ADC voltages seen on A0 for the 5 buttons:
 #include <LiquidCrystal.h>
 #include <Wire.h>
 #include <RTClib.h>
+#include <SoftwareSerial.h>
 
 // Defines
 // Cursor positions for date and time
@@ -43,8 +44,6 @@ ADC voltages seen on A0 for the 5 buttons:
 // Pins
 #define BUTTON_ADC      A0
 #define BACKLIGHT       10
-#define rx               2
-#define tx               3
 
 // Define button pushes
 #define RIGHT_10BIT      0
@@ -75,6 +74,19 @@ byte buttonJustPressed = false;
 byte buttonJustReleased = false;
 byte buttonWas = BUTTON_NONE;
 
+// Variables for ORP and data logger
+const byte rx = 2;
+const byte tx = 3;
+SoftwareSerial orpSerial (rx,tx);
+char sensor_data[20];
+String outputString;
+String dataFileOut;
+float ORP=0;
+byte string_received=0;
+boolean logData=false;
+boolean calibration=false;
+byte received_from_sensor=0;
+
 // Setup section for Arduino framework
 void setup()
 {
@@ -82,22 +94,28 @@ void setup()
  Wire.begin();
   
  // Set button input button
- pinMode( BUTTON_ADC, INPUT);
- digitalWrite( BUTTON_ADC, LOW);      // Ensure the internal pullup is off
+ pinMode( BUTTON_ADC, INPUT );
+ digitalWrite( BUTTON_ADC, LOW );      // Ensure the internal pullup is off
  
  // Turn on the LCD backlight
- pinMode( BACKLIGHT, OUTPUT);
+ pinMode( BACKLIGHT, OUTPUT );
  BACKLIGHT_ON();
  
  // Initialize the RTC
  rtc.begin();
  
+ Serial.begin(38400);
+ orpSerial.begin(38400);
+ orpSerial.print("e\r");
+ delay(50);
+ orpSerial.print("e\r");
+ delay(50);
+ 
  // Start the LCD and print a quick message
  lcd.begin(16,2);
  lcd.print("Starting up...");
- delay(1000);
+ delay(500);
 }
-
 
 // Function to print a preceding 0 for values less than 10
 void print_padded_digit(int value)
@@ -187,6 +205,7 @@ void printButton (String buttonText)
 
 void loop()
 {
+  // Start with a fresh canvas every time
   lcd.clear();
   DateTime now = rtc.now();
   
@@ -208,7 +227,9 @@ void loop()
     }
     case RIGHT:
     {
-      printButton("RIGHT");
+      printButton("Calibration");
+      calibration==true;
+      // Make subroutine startCalibration;
       break;
     }
     case UP:
@@ -246,11 +267,29 @@ void loop()
       buttonJustReleased = false;
   }
   
+  getORPdata();
   
-  lcd.setCursor(14,1);
-  lcd.print("mV");
-  lcd.setCursor(9,1);
-  lcd.print("0000");
+  delay(500);
+}
+
+void getORPdata()
+{
+  if (orpSerial.available() > 0)
+  {
+    received_from_sensor=orpSerial.readBytesUntil(13,sensor_data,20);
+    sensor_data[received_from_sensor]=0;
+    string_received=1;
+  }
   
-  delay(100);
+  orpSerial.print("R\r");
+  if (string_received==1)
+  {
+    ORP=atof(sensor_data);
+    outputString=sensor_data;
+    lcd.setCursor(0,1);
+    lcd.print(ORP,1);
+    lcd.setCursor(14,1);
+    lcd.print("mV");
+  }
+  string_received = 0;
 }
