@@ -84,7 +84,7 @@ String dataFileOut;
 float ORP=0;
 byte string_received=0;
 boolean logData=false;
-boolean calibration=false;
+
 byte received_from_sensor=0;
 
 // Setup section for Arduino framework
@@ -227,9 +227,8 @@ void loop()
     }
     case RIGHT:
     {
-      printButton("Calibration");
-      calibration==true;
-      // Make subroutine startCalibration;
+      //printButton("");
+      startCalibration();
       break;
     }
     case UP:
@@ -268,7 +267,7 @@ void loop()
   }
   
   getORPdata();
-  delay(500);
+  delay(320);
 }
 
 void getORPdata()
@@ -296,15 +295,20 @@ void getORPdata()
 
 void startCalibration()
 {
+  lcd.clear();
   lcd.setCursor(0,0);
   lcd.print("Calibration");
-  byte button = ReadButtons();
+  lcd.setCursor(0,1);
+  lcd.print("LFT=EXIT");
+  orpSerial.print("C\r");
   while ( 1 == 1 )
   {
-    orpSerial.print("C\r");
+    getORPdata();
+    byte button = ReadButtons();
     if (button == UP) orpSerial.print("+\r");
     if (button == DOWN) orpSerial.print("-\r");
-    if (button == SELECT) break;
+    if (button == LEFT) break;
+    delay(320);
   }
   orpSerial.print("E\r");
 }
