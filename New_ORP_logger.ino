@@ -268,7 +268,6 @@ void loop()
   }
   
   getORPdata();
-  
   delay(500);
 }
 
@@ -280,16 +279,32 @@ void getORPdata()
     sensor_data[received_from_sensor]=0;
     string_received=1;
   }
-  
+
   orpSerial.print("R\r");
   if (string_received==1)
   {
     ORP=atof(sensor_data);
     outputString=sensor_data;
-    lcd.setCursor(0,1);
-    lcd.print(ORP,1);
+    byte orpPos = (13 - outputString.length());
+    lcd.setCursor(orpPos,1);
+    lcd.print(outputString);
     lcd.setCursor(14,1);
     lcd.print("mV");
   }
   string_received = 0;
+}
+
+void startCalibration()
+{
+  lcd.setCursor(0,0);
+  lcd.print("Calibration");
+  byte button = ReadButtons();
+  while ( 1 == 1 )
+  {
+    orpSerial.print("C\r");
+    if (button == UP) orpSerial.print("+\r");
+    if (button == DOWN) orpSerial.print("-\r");
+    if (button == SELECT) break;
+  }
+  orpSerial.print("E\r");
 }
