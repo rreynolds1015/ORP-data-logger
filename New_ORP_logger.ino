@@ -77,11 +77,13 @@ byte buttonWas = BUTTON_NONE;
 // Variables for ORP and data logger
 const byte rx = 2;
 const byte tx = 3;
+const byte logPin = 12;
 SoftwareSerial orpSerial (rx,tx);
 char sensor_data[20];
 String outputString;
 String dataFileOut;
 float ORP=0;
+float ORPvalue=0;
 byte string_received=0;
 boolean logData=false;
 
@@ -96,6 +98,8 @@ void setup()
  // Set button input button
  pinMode( BUTTON_ADC, INPUT );
  digitalWrite( BUTTON_ADC, LOW );      // Ensure the internal pullup is off
+ pinMode( logPin, OUTPUT );
+ digitalWrite( logPin, HIGH);
  
  // Turn on the LCD backlight
  pinMode( BACKLIGHT, OUTPUT );
@@ -243,16 +247,16 @@ void loop()
     }
     case LEFT:
     {
-      printButton("LEFT");
+      printButton("Log Freq");
       break;
     }
     case SELECT:
     {
-      printButton("SELECT");
-      BACKLIGHT_OFF();
-      delay(150);
-      BACKLIGHT_ON();
-      delay(150);
+      logData = !logData;
+      if (logData == true)
+      { digitalWrite(logPin, HIGH); }
+      else
+      { digitalWrite(logPin, LOW); }
       break;
     }
     default:
@@ -266,11 +270,32 @@ void loop()
       buttonJustReleased = false;
   }
   
-  getORPdata();
+  ORPvalue = getORPdata();
+  
+  if (logData == true)
+  {
+    lcd.setCursor(0,1);
+    lcd.print("Logging");
+    Serial.print(now.month());
+    Serial.print('/');
+    Serial.print(now.day());
+    Serial.print('/');
+    Serial.print(now.year());
+    Serial.print(',');
+    Serial.print(now.hour());
+    Serial.print(':');
+    Serial.print(now.minute());
+    Serial.print(':');
+    Serial.print(now.second());
+    Serial.print(',');
+    Serial.print(ORPvalue,2);
+    Serial.print('\n');
+  }
+ 
   delay(320);
 }
 
-void getORPdata()
+float getORPdata()
 {
   if (orpSerial.available() > 0)
   {
@@ -290,6 +315,7 @@ void getORPdata()
     lcd.setCursor(14,1);
     lcd.print("mV");
   }
+  return ORP;
   string_received = 0;
 }
 
@@ -301,14 +327,15 @@ void startCalibration()
   lcd.setCursor(0,1);
   lcd.print("LFT=EXIT");
   orpSerial.print("C\r");
-  while ( 1 == 1 )
+  byte button;
+  do 
   {
     getORPdata();
-    byte button = ReadButtons();
+    button = ReadButtons();
     if (button == UP) orpSerial.print("+\r");
     if (button == DOWN) orpSerial.print("-\r");
-    if (button == LEFT) break;
     delay(320);
   }
+  while (button != LEFT);
   orpSerial.print("E\r");
 }
