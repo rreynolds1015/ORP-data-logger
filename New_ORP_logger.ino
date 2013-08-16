@@ -33,6 +33,7 @@ ADC voltages seen on A0 for the 5 buttons:
 #include <Wire.h>
 #include <RTClib.h>
 #include <SoftwareSerial.h>
+#include <Time.h>
 
 // Defines
 // Cursor positions for date and time
@@ -80,14 +81,22 @@ const byte tx = 3;
 const byte logPin = 12;
 SoftwareSerial orpSerial (rx,tx);
 char sensor_data[20];
-String outputString;
-String dataFileOut;
-float ORP=0;
-float ORPvalue=0;
-byte string_received=0;
+float ORP = 0;
+float ORPvalue = 0;
+float avgORP = 0;
+byte string_received = 0;
 boolean logData=false;
+unsigned long nextDataPoint;
+long logFreq = 5;
+byte received_from_sensor = 0;
+byte counter = 1;
 
-byte received_from_sensor=0;
+// Variables for debugging with PC
+byte pc_debug = 1;
+byte received_from_computer = 0;
+char computerdata[20];
+
+time_t syncProvider() { return rtc.now().unixtime(); }
 
 // Setup section for Arduino framework
 void setup()
@@ -95,11 +104,13 @@ void setup()
  // Start the I2C functions for the RTC
  Wire.begin();
   
- // Set button input button
+ // Set button input
  pinMode( BUTTON_ADC, INPUT );
  digitalWrite( BUTTON_ADC, LOW );      // Ensure the internal pullup is off
+ 
+ // Set the pin for supplying power to the OpenLog board
  pinMode( logPin, OUTPUT );
- digitalWrite( logPin, HIGH);
+ digitalWrite( logPin, LOW);
  
  // Turn on the LCD backlight
  pinMode( BACKLIGHT, OUTPUT );
@@ -107,21 +118,39 @@ void setup()
  
  // Initialize the RTC
  rtc.begin();
+ setSyncProvider(syncProvider);
  
+ // Start the on-board serial and the software serial
  Serial.begin(38400);
  orpSerial.begin(38400);
+ 
+ // Ensure the ORP circuit is not in continuous mode
  orpSerial.print("e\r");
  delay(50);
+ // Write the command a second time to make sure we're out of continuous mode
  orpSerial.print("e\r");
  delay(50);
  
  // Start the LCD and print a quick message
  lcd.begin(16,2);
  lcd.print("Starting up...");
- delay(500);
+ 
 }
 
-// Function to print a preceding 0 for values less than 10
+// Function that looks for events on the serial interface.  Easiest method to 
+// send calibration events to the Atlas ORP
+void serialEvent()
+{
+  if (pc_debug == 1)
+  {
+    received_from_computer = Serial.readBytesUntil(13,computerdata,20);
+    computerdata[received_from_computer] = 0;
+    orpSerial.print(computerdata);
+    orpSerial.print('\r');
+  }
+}
+
+// Function to print a preceding 0 to the LCD for date/time less than 10
 void print_padded_digit(int value)
 {
   if (value < 10) {
@@ -150,6 +179,7 @@ void print_time(DateTime *now)
   print_padded_digit(now->second());
 }
 
+// Function to determine which button was pressed
 byte ReadButtons()
 {
  unsigned int buttonVoltage;
@@ -157,7 +187,7 @@ byte ReadButtons()
  
  // Read the button ADC pin voltage
  buttonVoltage = analogRead( BUTTON_ADC );
- // Is the voltage within a valid range - *** Conisder if this can be a switch instead***
+ // Is the voltage within a valid range
  if (buttonVoltage < ( RIGHT_10BIT + HYSTERESIS ))
  {
    button = RIGHT;
@@ -194,107 +224,152 @@ byte ReadButtons()
    buttonJustPressed = false;
    buttonJustReleased = true;
  }
- 
  buttonWas = button;
- 
  return(button);
- 
 }
 
-void printButton (String buttonText)
+// Function to write data to the SD card via the serial port
+void LogData(float ORPvalue, DateTime *now)
 {
-  lcd.setCursor(0,1);
-  lcd.print(buttonText);
+  if (now->month()<10) Serial.print('0');
+  Serial.print(now->month());
+  Serial.print('/');
+  if (now->day()<10) Serial.print('0');
+  Serial.print(now->day());
+  Serial.print('/');
+  Serial.print(now->year());
+  
+  Serial.print(',');
+  if (now->hour()<10) Serial.print('0');
+  Serial.print(now->hour());
+  Serial.print(':');
+  if (now->minute()<10) Serial.print('0');
+  Serial.print(now->minute());
+  Serial.print(':');
+  if (now->second()<10) Serial.print('0');
+  Serial.print(now->second());
+  Serial.print(',');
+  
+  Serial.print(ORPvalue,2);
+  Serial.print('\n');
 }
 
 void loop()
 {
   // Start with a fresh canvas every time
   lcd.clear();
-  DateTime now = rtc.now();
   
+  // Get the time for this cycle and print it to the LCD
+  DateTime now = rtc.now();
   print_date (&now);
   print_time (&now);
   
+  // Continually look for a button press event and react to it
   byte button;
   button = ReadButtons();
+  
+  // On a button press event, clear the area of the LCD for feedback
   if ( buttonJustPressed || buttonJustReleased )
   {
     lcd.setCursor(0,1);
     lcd.print( "       " );
   }
+  
+  // What's the status of the button press
   switch( button )
   {
     case BUTTON_NONE:
-    {
-      break;
-    }
+    { break; }
     case RIGHT:
     {
-      //printButton("");
       startCalibration();
       break;
     }
     case UP:
     {
-      printButton("UP");
+      /* 
+      Insert code to allow PC debugging to be turned on/off from the main screen
+      but need a physical sign for the operator to know if it's on or off
+      */
+      // pc_debug = !pc_debug
       break;
     }
     case DOWN:
-    {
-      printButton("DOWN");
-      break;
-    }
+    { break; }
     case LEFT:
     {
-      printButton("Log Freq");
+      setLogFreq();
       break;
     }
     case SELECT:
     {
       logData = !logData;
       if (logData == true)
-      { digitalWrite(logPin, HIGH); }
+      { 
+        digitalWrite(logPin, HIGH);
+        LogData(ORPvalue,&now);
+        nextDataPoint = now.unixtime() + logFreq;
+      }
       else
       { digitalWrite(logPin, LOW); }
       break;
     }
     default:
-    {
-      break;
-    }
+    { break; }
     
+    // Reset the flags for if a button was pressed
     if ( buttonJustPressed )
       buttonJustPressed = false;
     if ( buttonJustReleased )
       buttonJustReleased = false;
-  }
+   }
+   
+   // We want to average the ORP data coming in
+   // Averaging 3 points at 320 ms/point gives a response every ~1 second
+   if (counter < 4)
+   {
+     avgORP = (avgORP + getORPdata()) / counter;
+     counter ++;
+   }
+   else 
+   {
+     counter = 1;
+     ORPvalue = avgORP; 
+   }
+   
+   byte orpPos;
+   if (abs((ORPvalue / 1000)) >= 1)
+     orpPos = 9;
+   else if (abs((ORPvalue / 100)) >= 1)
+     orpPos = 10;
+   else if (abs((ORPvalue / 10)) >= 1)
+     orpPos = 11;
+   else
+     orpPos = 12;
+   
+   if (ORPvalue < 0) orpPos = orpPos--;
+   
+   lcd.setCursor(orpPos,1);
+   lcd.print(ORPvalue,0);
+   lcd.setCursor(14,1);
+   lcd.print("mV");
   
-  ORPvalue = getORPdata();
-  
+  // Check if we should be logging data to the SD card
   if (logData == true)
   {
     lcd.setCursor(0,1);
     lcd.print("Logging");
-    Serial.print(now.month());
-    Serial.print('/');
-    Serial.print(now.day());
-    Serial.print('/');
-    Serial.print(now.year());
-    Serial.print(',');
-    Serial.print(now.hour());
-    Serial.print(':');
-    Serial.print(now.minute());
-    Serial.print(':');
-    Serial.print(now.second());
-    Serial.print(',');
-    Serial.print(ORPvalue,2);
-    Serial.print('\n');
+    // Okay, we should be logging data, but is it the time for the next datapoint?
+    if (now.unixtime() >= nextDataPoint)
+    {
+      LogData(ORPvalue,&now);
+      nextDataPoint = now.unixtime() + logFreq;
+    }
   }
- 
   delay(320);
 }
 
+// Function to get (and return) the value from the ORP sensor
 float getORPdata()
 {
   if (orpSerial.available() > 0)
@@ -308,17 +383,17 @@ float getORPdata()
   if (string_received==1)
   {
     ORP=atof(sensor_data);
-    outputString=sensor_data;
-    byte orpPos = (13 - outputString.length());
+/*    byte orpPos = (13 - strlen(sensor_data));
     lcd.setCursor(orpPos,1);
-    lcd.print(outputString);
+    lcd.print(ORP,0);
     lcd.setCursor(14,1);
-    lcd.print("mV");
+    lcd.print("mV");  */
   }
   return ORP;
   string_received = 0;
 }
 
+// Function to send calibration commands to the ORP board. May still be buggy.
 void startCalibration()
 {
   lcd.clear();
@@ -330,12 +405,71 @@ void startCalibration()
   byte button;
   do 
   {
-    getORPdata();
+    if (counter < 4)
+    {
+      avgORP = (avgORP + getORPdata()) / counter;
+      counter ++;
+    }
+    else 
+    {
+      counter = 1;
+      ORPvalue = avgORP; 
+    }
+   
+    byte orpPos;
+    if (abs((ORPvalue / 1000)) >= 1)
+      orpPos = 9;
+    else if (abs((ORPvalue / 100)) >= 1)
+      orpPos = 10;
+    else if (abs((ORPvalue / 10)) >= 1)
+      orpPos = 11;
+    else
+      orpPos = 12;
+   
+    if (ORPvalue < 0) orpPos = orpPos--;
+   
+    lcd.setCursor(orpPos,1);
+    lcd.print(ORPvalue,0);
+    lcd.setCursor(14,1);
+    lcd.print("mV");
+    
+    
     button = ReadButtons();
     if (button == UP) orpSerial.print("+\r");
     if (button == DOWN) orpSerial.print("-\r");
+    if (button == SELECT) orpSerial.print("X\r");
     delay(320);
   }
   while (button != LEFT);
   orpSerial.print("E\r");
+}
+
+// Function to use the button shield to set the frequency for data logging.
+void setLogFreq()
+{ 
+  byte button;
+  do
+  {
+    button = ReadButtons();
+    if (button == UP) logFreq = logFreq + 5;
+    if (button == DOWN) logFreq = logFreq - 5;
+    if (logFreq < 5) logFreq = 5;
+    
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.print("Set log freq");
+    lcd.setCursor(0,1);
+    lcd.print("RT=EXIT");
+    lcd.setCursor(13,1);
+    lcd.print("sec");
+    if (logFreq < 10)
+    { lcd.setCursor(11,1); }
+    else if (logFreq < 100)
+    { lcd.setCursor(10,1); }
+    else
+    { lcd.setCursor(9,1); }
+    lcd.print(logFreq);
+    delay(200);
+  }
+  while (button != RIGHT);
 }
